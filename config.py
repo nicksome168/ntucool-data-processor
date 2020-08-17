@@ -1,0 +1,1 @@
+COLNAME_STUD_NTU_IDS = "ntu_id"
