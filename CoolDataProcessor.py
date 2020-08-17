@@ -1,78 +1,99 @@
 import pandas as pd
-from CoolDataProcessor_helper import load_data_helper
 
-'''ALL PUBLIC METHODS RETURN A LIST'''
+row_name = "student_id"
+col_name = "video_id"
 
-class CoolDataProcessor():
-    TABLENAMES = ["course table", "videos table","students table", "viewing records table"]
-    def __init__(self, path, table_names=[]):
-        self._path = path
-        self._course_table = None
-        self._videos_table = None
-        self._studs_table = None
-        self._view_records_table = None
-        if (table_names!=[]):
-            CoolDataProcessor.TABLENAMES = table_names
 
-    def load_data(self):
-        tables = load_data_helper(self._path, CoolDataProcessor.TABLENAMES)
-        for table_name in tables.keys():
-            if ("course" in table_name.lower()):
-                self._course_table = tables[table_name]
-            elif ("videos" in table_name.lower()):
-                self._videos_table = tables[table_name]
-            elif ("students" in table_name.lower()):
-                self._studs_table = tables[table_name]
-            elif ("records" in table_name.lower()):
-                self._view_records_table = tables[table_name]
-                
-    def get_course(self):
-        return self._course_table
-    def get_videos(self):
-        return self._view_records_table
-    def get_students(self):
-        return self._studs_table
-    def get_records(self):
-        return self._view_records_table
+def watch_time(df, period=[0000, 2400]):
+    valid_df = df[(df['end'] > df['start']) & (df['playback_rate'] != 0)]
+    valid_df = valid_df[(valid_df["created_at"] > period[0]) &
+                        (valid_df["created_at"] < period[1])]
+    valid_df["elasped"] = (
+        valid_df['end'] - valid_df['start'])/valid_df['playback_rate']
+    table = pd.pivot_table(valid_df, values='elasped', index=[
+                           row_name], columns=[col_name], aggfunc=sum)
+    return table
+# 學生實際總觀看時間（經播放速度矯正）
 
-    #學生實際總觀看時間（經播放速度矯正）
-    def sum_watch_time(self, student_id="", video_id="", start_time="", end_time=""):
-        pass
-        # return sum_watch_time
-    
-    def completion_rate(self, student_id="", video_id="", start_time="", end_time=""):
-        pass
-        # return completion_r
 
-    #學生後退次數/快轉次數/總暫停次數
-    #（ pause_thresh 是暫停的自定義閥值，如間隔小於5秒才算暫停）
-    def action_freq(self, student_id="", video_id="", start_time="", end_time="", action="pause", pause_thresh=5):
-        pass
-        # return action_freq
+def completion_rate(df, videos_df):
+    # durations of the lectures
+    durations = [int(duration[duration.find(">")+1:duration.find("}")])
+                 for duration in videos_df['meta']]
+    videos_ids = videos_df["id"]
+    table = watch_time(df)
+    for duration, video_id in zip(durations, videos_ids):
+        try:
+            table[video_id] /= duration
+        except:
+            pass
+    return table
 
-    #學生後退秒數/快轉秒數
-    #（ pause_thresh 是後退/快轉的自定義閥值，如間隔>=5秒才算後退/快轉
-    def action_time(self, student_id="", video_id="", start_time="", end_time="", action="forward", pause_thresh=5):
-        pass
-        # return action_time
 
-    #學生觀看時段累積秒數/該時段累積秒數佔比
-    #（時段自定義，如23~3=period0; 3~5=period1, etc..）
-    def period_sum_watch_time(self, student_id="", video_id="", start_time="", end_time="", period_def={}):
-        pass
-        # return period_sum_watch_time
-    
-    def avg_play_back_rate(self, student_id="", video_id="", start_time="", end_time=""):
-        pass
-        # return avg_play_back_rate
+def action_freq(df, action="backward"):
+    if(action == "backward"):
+        records = df[(df['start'] > df['end']) & (
+            df['playback_rate'] == 0)]
 
+    elif (action == "forward"):
+        records = df[(df['end'] > df['start']) & (
+            df['playback_rate'] == 0)]
+
+    table = pd.pivot_table(records, values='created_at', index=[
+        row_name], columns=[col_name], aggfunc=lambda x: len(x.unique()))
+    return table
+# 學生後退次數/快轉次數/總暫停次數
+# end, start 先後判斷；playback_rate==0
+
+
+def action_duration(df, action="forward"):
+    if(action == "backward"):
+        records = df[(df['start'] > df['end']) & (
+            df['playback_rate'] == 0)]
+        records["elasped"] = records["start"] - records["end"]
+    elif (action == "forward"):
+        records = df[(df['end'] > df['start']) & (
+            df['playback_rate'] == 0)]
+        records["elasped"] = records["end"] - records["start"]
+    table = pd.pivot_table(records, values='elasped', index=[
+        row_name], columns=[col_name], aggfunc=sum)
+    return table
+
+
+def pause_freq(df, pause_min=5, pause_max=300):
+    # if the elasped time between next record and last record
+        # is longer than 3 seconds, it counts as a pause
+    counts = {}
+    last_records = {}
+    records = df
+    for row_i in range(len(records)):
+        time = records.iloc[row_i]["created_at"]
+        stud_id = records.iloc[row_i]["student_id"]
+        video_id = records.iloc[row_i]["video_id"]
+        if (last_records.get(stud_id + video_id) and last_records.get(stud_id + video_id) != -1):
+            last_time = last_records.get(stud_id + video_id)
+            if ((last_time - time) > pause_min & (last_time - time) < pause_max):
+                if (not counts.get(stud_id)):
+                    counts[stud_id] = {}
+                if (not counts[stud_id].get(video_id)):
+                    counts[stud_id][video_id] = 1
+                else:
+                    counts[stud_id][video_id] += 1
+                last_records[stud_id + video_id] = -1
+        else:
+            last_records[stud_id + video_id] = time
+    return pd.DataFrame(counts).T
+# pause_thresh 是暫停的自定義閥值，如間隔大於5秒才算暫停 and 小於300秒（離線）
+
+
+def avg_play_back_rate(student_ntu_ids="", video_ids=""):
+    total_spent_time = [x if x != 0 else 1 for x in total_spent_time]
+    avg_playback_rate = [
+        i/j for (i, j) in zip(total_watch_video_time, total_spent_time)]
+    student_info['avg_playback_rate'] = avg_playback_rate
+    pass
+    # return avg_play_back_rate
 
 # 學生平均播放速度
 # input: 時間區間, 學生ID, 影片ID (optional)
 # output: 該區間內/整學期 該學生 某/所有影片 的 平均播放速度
-
-
-
-
-
-
